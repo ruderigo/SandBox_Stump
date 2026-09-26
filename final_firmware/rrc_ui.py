@@ -20,12 +20,14 @@
 
 import ujson as json
 import rrc
+import theme
+import features
 import i18n
 
 STYLE = """
 *{box-sizing:border-box;}
 body{
-  background:#1b1512; color:#ecdfc8; margin:0;
+  background:var(--bg); color:var(--text); margin:0;
   font-family:ui-monospace,'Cascadia Code','SF Mono','Courier New',monospace;
   font-size:14px; display:flex; flex-direction:column;
   /* 100vh is the WRONG height on mobile: it means the viewport with
@@ -39,13 +41,13 @@ body{
   height:100dvh;
 }
 header{
-  padding:8px 12px; border-bottom:1px solid #493c2e; background:#2a2119;
+  padding:8px 12px; border-bottom:1px solid var(--border); background:var(--panel);
   display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
 }
-header b{color:#d97a3a;}
-#topic{color:#9c8d76; font-size:12px; flex:1; min-width:0;
+header b{color:var(--ember);}
+#topic{color:var(--muted); font-size:12px; flex:1; min-width:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-#me{color:#f0a050;}
+#me{color:var(--ember-bright);}
 .me{white-space:nowrap;}
 /* Escape hatches. Touch-sized (44px min) because the kiosk is a
    wall-mounted panel operated with a finger, not a cursor. */
@@ -53,36 +55,51 @@ header b{color:#d97a3a;}
 .nav a{
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   min-width:44px; min-height:44px; gap:2px; padding:4px 8px;
-  color:#d97a3a; text-decoration:none; border:1px solid #493c2e;
-  border-radius:6px; background:#231c16;
+  color:var(--ember); text-decoration:none; border:1px solid var(--border);
+  border-radius:6px; background:var(--panel-2);
 }
 .nav a:hover,.nav a:active,.nav a:focus{
-  color:#f0a050; border-color:#d97a3a; outline:none;
+  color:var(--ember-bright); border-color:var(--ember); outline:none;
 }
 .nav span{font-size:10px; letter-spacing:.02em;}
 main{flex:1; display:flex; min-height:0;}
 #rooms{
-  width:132px; border-right:1px solid #493c2e; background:#221b15;
+  width:132px; border-right:1px solid var(--border); background:var(--panel-2);
   overflow-y:auto; flex-shrink:0;
 }
-#rooms div{padding:7px 10px; cursor:pointer; border-bottom:1px solid #2f271e;
+#rooms div{padding:7px 10px; cursor:pointer; border-bottom:1px solid var(--line);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-#rooms div:hover{background:#2f271e;}
-#rooms div.active{background:#d97a3a; color:#1b1512; font-weight:bold;}
+#rooms div:hover{background:var(--line);}
+#rooms div.active{background:var(--ember); color:var(--bg); font-weight:bold;}
+/* DM section nests plain divs inside #rooms, so the base row styling
+   above (#rooms div{...}) already applies -- descendant selectors
+   match at any depth, not just direct children. Only the header label
+   and the unread badge need their own rules, and they need !important
+   specifically: #rooms div's id-based selector outranks a bare class
+   selector on specificity alone, so .dm-header's overrides would
+   silently lose without it. */
+.dm-header{
+  padding:10px 10px 4px !important; cursor:default !important;
+  font-size:.72rem; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--dim); border-bottom:none !important;
+}
+#rooms div.dm-entry.unread{color:var(--ember-bright); font-weight:bold;}
+.tag{font-size:.72em; color:var(--muted); border:1px solid var(--border); border-radius:4px;
+  padding:0 4px; margin-left:6px; font-weight:normal; vertical-align:middle;}
 #log{flex:1; overflow-y:auto; padding:10px 12px; line-height:1.5;}
 #log p{margin:0 0 3px; overflow-wrap:break-word; word-break:break-word;}
-.nick{color:#d97a3a;}
-.self .nick{color:#f0a050;}
-.system{color:#7d715f; font-style:italic;}
-.action{color:#c8b48f; font-style:italic;}
-.local{color:#7d715f;}
+.nick{color:var(--ember);}
+.self .nick{color:var(--ember-bright);}
+.system{color:var(--dim); font-style:italic;}
+.action{color:var(--action); font-style:italic;}
+.local{color:var(--dim);}
 /* Private messages, visually distinct from room traffic so nobody
    mistakes one for something the whole room can see. */
-.dm{color:#c8a2c8;}
-.dm .nick{color:#d8b4d8;}
-.err{color:#e07a5a;}
+.dm{color:var(--dm);}
+.dm .nick{color:var(--dm-nick);}
+.err{color:var(--err);}
 footer{
-  border-top:1px solid #493c2e; background:#2a2119;
+  border-top:1px solid var(--border); background:var(--panel);
   display:flex; gap:8px;
   /* Pad past the home-indicator / gesture area on devices that report
      one, so the input isn't flush against a bar the user can't move. */
@@ -90,16 +107,16 @@ footer{
   padding-bottom:calc(8px + env(safe-area-inset-bottom, 0px));
 }
 #in{
-  flex:1; min-width:0; background:#1b1512; color:#ecdfc8;
-  border:1px solid #493c2e; border-radius:4px; padding:9px 10px;
+  flex:1; min-width:0; background:var(--bg); color:var(--text);
+  border:1px solid var(--border); border-radius:4px; padding:9px 10px;
   font-family:inherit; font-size:14px;
 }
-#in:focus{outline:2px solid #d97a3a; outline-offset:1px;}
+#in:focus{outline:2px solid var(--ember); outline-offset:1px;}
 button{
-  background:#d97a3a; color:#1b1512; border:none; border-radius:4px;
+  background:var(--ember); color:var(--bg); border:none; border-radius:4px;
   padding:9px 16px; font-family:inherit; font-weight:bold; cursor:pointer;
 }
-button:hover{background:#f0a050;}
+button:hover{background:var(--ember-bright);}
 @media (max-width:520px){
   #rooms{width:96px;}
   header{font-size:13px;}
@@ -118,23 +135,53 @@ button:hover{background:#f0a050;}
    stacks tightly. Padding is now symmetric top/bottom, not just top. */
 .langbar{
   display:flex; gap:6px; padding:8px 12px; margin:0;
-  background:#241d17; border-bottom:1px solid #493c2e;
+  background:var(--panel-2); border-bottom:1px solid var(--border);
 }
 .langbar a,.langbar span{
   min-width:36px; min-height:28px; display:flex; align-items:center;
   justify-content:center; padding:3px 9px; border-radius:6px;
   font-size:.72rem; font-weight:bold; text-decoration:none;
-  border:1px solid #493c2e;
+  border:1px solid var(--border);
 }
-.langbar a{color:#9c8d76;}
-.langbar a:hover,.langbar a:focus{color:#d97a3a; border-color:#d97a3a; outline:none;}
-.langbar span.lang-active{background:#d97a3a; color:#1b1512; border-color:#d97a3a;}
+.langbar a{color:var(--muted);}
+.langbar a:hover,.langbar a:focus{color:var(--ember); border-color:var(--ember); outline:none;}
+.langbar span.lang-active{background:var(--ember); color:var(--bg); border-color:var(--ember);}
 """
 
 SCRIPT = """
 var room=ROOM_INIT, lastId=0, nick=NICK_INIT, polling=false, pollAgain=false;
 var log=document.getElementById('log');
+// DM thread state -- purely client-side and session-scoped, since the
+// server has no concept of "threads": it just delivers a flat inbox
+// per recipient (rrc.py's _dms). Grouping by sender, tracking unread
+// counts, and remembering which thread is currently open all happen
+// here, not on the board.
+var dmThreads={}, dmUnread={}, viewingDM=null, lastIdBeforeDM=null;
+// Nicks the server knows are other Stump nodes (their stump.node beacons).
+var stumps={};
+function stumpTag(el, name){
+  // A separate element, never part of the name: the name is what
+  // /msg and openDM use, so it has to stay exactly the nick.
+  if(!stumps[name]) return;
+  var t=document.createElement('span');
+  t.className='tag';
+  t.textContent='stump';
+  el.appendChild(t);
+}
 var inp=document.getElementById('in');
+// The most recent user list from a poll, in each person's own
+// server-registered case. find_client_by_nick() on the server is
+// deliberately case-insensitive (so a DM to "BOB" still reaches
+// "Bob"), but dmThreads here is a plain object keyed by whatever
+// string was actually used -- typing "/msg BOB hello" would key the
+// sent side "BOB" while Bob's own reply arrives with m.nick "Bob",
+// splitting one conversation into two separate sidebar entries.
+// Resolving a typed target against this list before using it as a key
+// keeps both sides of a conversation under the one case Bob actually
+// registered with. Confirmed directly: without this, typing a
+// different case than someone's real nick reproduces exactly that
+// split-thread symptom.
+var knownUsers=[];
 
 // Escapes the five characters that matter in HTML. The previous
 // version set textContent on a throwaway div and read back innerHTML,
@@ -159,7 +206,8 @@ function line(html, cls){
 
 function render(m){
   if(m.kind==='dm'){
-    line('&#8594; <span class="nick">'+esc(m.nick)+'</span> '+esc(m.body),'dm');
+    var self=(m.nick===nick)?' self':'';
+    line('&#8594; <span class="nick">'+esc(m.nick)+'</span> '+esc(m.body),'dm'+self);
     return;
   }
   if(m.kind==='system'){ line(esc(m.body),'system'); return; }
@@ -168,16 +216,133 @@ function render(m){
   line('&lt;<span class="nick">'+esc(m.nick)+'</span>&gt; '+esc(m.body), 'msg'+self);
 }
 
-function setRooms(list, here){
+function setRooms(list, here, users){
+  knownUsers=users||[];
   var box=document.getElementById('rooms');
   box.innerHTML='';
   list.forEach(function(r){
     var d=document.createElement('div');
     d.textContent='#'+r;
-    if(r===here) d.className='active';
-    d.onclick=function(){ send('/join '+r); };
+    if(!viewingDM && r===here) d.className='active';
+    // Clicking a room the server already has you in -- true for EVERY
+    // room click while viewing a DM, since opening one never actually
+    // changes your room server-side -- used to still send /join
+    // unconditionally. The server correctly replied "you're already in
+    // #room" (join_already in rrc.py), which is true but confusing
+    // right after leaving a DM, and because the log-clearing below only
+    // ever triggered on an ACTUAL room change (never true here), that
+    // reply landed straight on top of whatever the DM thread had left
+    // in the log -- confirmed as the real, reported cause of DM
+    // content appearing to persist into #main. Exiting DM view back to
+    // the SAME room is purely a local display change now: clear the
+    // log directly, restore lastId to what it was before the DM opened
+    // (advanced silently by messages that arrived and were correctly
+    // skipped from rendering while viewingDM was set, but never
+    // actually shown -- restoring it re-fetches them on the next poll
+    // instead of leaving them permanently missed), and re-poll, with no
+    // /join sent to the server at all. A genuine room change (r is
+    // NOT the one the server already has you in) still sends /join
+    // exactly as before.
+    d.onclick=function(){
+      var wasViewingDM=!!viewingDM;
+      viewingDM=null;
+      if(r===room){
+        if(wasViewingDM){
+          log.innerHTML='';
+          if(lastIdBeforeDM!==null){ lastId=lastIdBeforeDM; lastIdBeforeDM=null; }
+          renderDMSidebar();
+          poll();
+        }
+      } else {
+        send('/join '+r);
+      }
+    };
     box.appendChild(d);
   });
+  renderUserList(users||[]);
+  var dmBox=document.createElement('div');
+  dmBox.id='dm-section';
+  box.appendChild(dmBox);
+  renderDMSidebar();
+}
+
+function renderUserList(users){
+  // "Select someone and DM them" -- clicking a name here calls the
+  // SAME openDM() the "Direct Messages" section below already uses to
+  // reopen an existing thread. That reuse is what makes the first
+  // message to someone land in the same place as every message after
+  // it: opening the thread FIRST (by clicking a name, here or there)
+  // means viewingDM is already set by the time anything is typed, so
+  // the plain-line-while-viewingDM path in send() handles it -- the
+  // same path a second or third message already went through. The
+  // separate fix in send() below covers the OTHER way to start a
+  // thread (typing /msg directly without clicking anyone first), so
+  // both roads into a conversation end up in the same place.
+  var here=document.getElementById('user-section');
+  if(here) here.remove();
+  var box=document.getElementById('rooms');
+  // Excludes both yourself AND anyone already in dmThreads -- confirmed
+  // from a real screenshot that showing the same name in both "Message
+  // someone" and "Direct Messages" at once reads as a duplicate, not
+  // two different actions. Someone you already have a thread with is
+  // reachable from that thread already; this list is specifically for
+  // starting a NEW one.
+  var others=(users||[]).filter(function(u){ return u!==nick && !dmThreads[u]; });
+  if(others.length===0) return;
+  var sec=document.createElement('div');
+  sec.id='user-section';
+  var hdr=document.createElement('div');
+  hdr.className='dm-header';
+  hdr.textContent=I18N_MESSAGE_SOMEONE;
+  sec.appendChild(hdr);
+  others.forEach(function(u){
+    var d=document.createElement('div');
+    d.className='dm-entry'+(viewingDM===u?' active':'');
+    d.textContent=u;
+    stumpTag(d, u);
+    d.onclick=function(){ openDM(u); };
+    sec.appendChild(d);
+  });
+  box.appendChild(sec);
+}
+
+function renderDMSidebar(){
+  // Its own nested container, rebuilt independently of the room list
+  // above -- setRooms() only runs once per poll (when d.rooms is
+  // present), but an unread count needs to update the instant a DM
+  // arrives or a thread is opened, without waiting for or duplicating
+  // the room list rebuild.
+  var dmBox=document.getElementById('dm-section');
+  if(!dmBox) return;
+  dmBox.innerHTML='';
+  var senders=Object.keys(dmThreads);
+  if(senders.length===0) return;
+  var hdr=document.createElement('div');
+  hdr.className='dm-header';
+  hdr.textContent=I18N_DIRECT_MESSAGES;
+  dmBox.appendChild(hdr);
+  senders.sort().forEach(function(s){
+    var unread=dmUnread[s]||0;
+    var d=document.createElement('div');
+    d.className='dm-entry'+(viewingDM===s?' active':'')+(unread>0?' unread':'');
+    d.textContent=s+(unread>0?' ('+unread+')':'');
+    stumpTag(d, s);
+    d.onclick=function(){ openDM(s); };
+    dmBox.appendChild(d);
+  });
+}
+
+function openDM(sender){
+  // Only remember lastId the FIRST time DM view is entered (not on
+  // every switch between two open threads) -- so #main round-trips
+  // back to whatever lastId was before ANY DM was opened, not
+  // whichever thread happened to be open most recently.
+  if(!viewingDM){ lastIdBeforeDM=lastId; }
+  viewingDM=sender;
+  dmUnread[sender]=0;
+  log.innerHTML='';
+  (dmThreads[sender]||[]).forEach(function(m){ render(m); });
+  renderDMSidebar();
 }
 
 function poll(){
@@ -195,20 +360,33 @@ function poll(){
   fetch('/rrc/poll?room='+encodeURIComponent(room)+'&since='+lastId)
    .then(function(r){return r.json();})
    .then(function(d){
-     if(d.room && d.room!==room){ room=d.room; lastId=0; log.innerHTML=''; }
-     // Room messages and private ones share the id sequence, so merging
-     // and sorting shows them in the order they actually happened rather
-     // than in two separate clumps.
-     var all=(d.messages||[]).concat(d.dms||[]);
-     all.sort(function(a,b){return a.id-b.id;});
-     all.forEach(function(m){
-       // Second line of defence: never render an id already shown, so
-       // even an overlapping response can't duplicate anything.
+     if(d.room && d.room!==room){
+       room=d.room; lastId=0;
+       if(!viewingDM){ log.innerHTML=''; }
+     }
+     // Room messages and DMs are no longer merged into one stream --
+     // they render into two different places now (the room log vs. a
+     // per-sender thread), so the ordering between them stopped
+     // mattering the moment they stopped sharing a display. Each is
+     // still processed in its own arrival order, id-guarded exactly
+     // as before against a re-delivered or overlapping response.
+     var maxId=lastId;
+     (d.messages||[]).forEach(function(m){
+       if(m.id>maxId) maxId=m.id;
        if(m.id<=lastId) return;
-       render(m);
-       lastId=m.id;
+       if(!viewingDM) render(m);
      });
-     if(d.rooms) setRooms(d.rooms, room);
+     (d.dms||[]).forEach(function(m){
+       if(m.id>maxId) maxId=m.id;
+       if(m.id<=lastId) return;
+       var box=dmThreads[m.nick]=dmThreads[m.nick]||[];
+       box.push(m);
+       if(viewingDM===m.nick){ render(m); }
+       else{ dmUnread[m.nick]=(dmUnread[m.nick]||0)+1; }
+     });
+     lastId=maxId;
+     if(d.stumps){ stumps={}; d.stumps.forEach(function(n){ stumps[n]=1; }); }
+     if(d.rooms) setRooms(d.rooms, room, d.users); else renderDMSidebar();
      if(d.topic!==undefined) document.getElementById('topic').textContent=d.topic?('— '+d.topic):'';
      if(d.nick && d.nick!==nick){ nick=d.nick; document.getElementById('me').textContent=nick; }
      onPollOk();
@@ -238,16 +416,80 @@ function send(text){
   // outcome, so a failed request cannot leave the box permanently dead.
   if(sending) return;
   setBusy(true);
-  fetch('/rrc/send',{method:'POST',body:text})
+  // While a DM thread is open, a plain line (no leading /) is sent as
+  // a reply to that thread rather than posted to whatever room the
+  // server still has you in -- typing and hitting Enter should just
+  // work, the way replying in any chat app does, without retyping
+  // "/msg <name>" every single line. A command (still starting with
+  // /) is left alone and goes to the server exactly as typed.
+  var isDMReply=(viewingDM && text.charAt(0)!=='/');
+  // Typing /msg (or its /m, /w aliases) directly is ALSO how a
+  // conversation starts, not just clicking a name in the sidebar first
+  // -- recognized here so that path lands in the same place too. Match
+  // mirrors rrc.py's own parsing exactly (arg.split(" ", 1) there,
+  // same nick-then-rest-of-line shape here) so what this recognizes as
+  // a DM is exactly what the server will actually treat as one.
+  var directMsgMatch=(!isDMReply) && text.match(/^\/(?:msg|m|w)\s+(\S+)\s+([\s\S]+)/i);
+  var outgoing=isDMReply ? ('/msg '+viewingDM+' '+text) : text;
+  fetch('/rrc/send',{method:'POST',body:outgoing})
    .then(function(r){return r.json();})
    .then(function(d){
-     (d.replies||[]).forEach(function(t){
-       if(t==='__CLEAR__'){ log.innerHTML=''; return; }
-       line(esc(t),'local');
-     });
+     if(isDMReply){
+       // The server only ever delivers a DM to its RECIPIENT's inbox
+       // (rrc.py's _dms is keyed by recipient, never the sender) -- so
+       // without echoing it here directly, the sender would never see
+       // their own half of the conversation in the thread view at all,
+       // confirmed by reading send_dm()'s actual storage target.
+       var box=dmThreads[viewingDM]=dmThreads[viewingDM]||[];
+       var mine={id:0, nick:nick, body:text, kind:'dm'};
+       box.push(mine);
+       render(mine);
+     } else if(directMsgMatch){
+       var target=directMsgMatch[1], msgBody=directMsgMatch[2];
+       // Resolve the typed target against the current, known user list
+       // to the SAME case that person actually registered with --
+       // matching rrc.py's own find_client_by_nick, which is
+       // deliberately case-insensitive server-side. Without this,
+       // typing "/msg BOB hello" keys this client's own dmThreads
+       // "BOB", but Bob's own reply arrives with m.nick "Bob" (his
+       // real, registered case) and lands in a SEPARATE dmThreads
+       // entry -- one conversation split into two sidebar rows,
+       // confirmed directly as a real, reported duplicate-DM symptom.
+       // Falls back to the typed text unresolved if no current match
+       // exists (an unknown or since-departed nick) -- the server's
+       // own reply below still covers that case correctly either way.
+       for(var i=0;i<knownUsers.length;i++){
+         if(knownUsers[i].toLowerCase()===target.toLowerCase()){ target=knownUsers[i]; break; }
+       }
+       // The same two checks rrc.py's own /msg handling makes BEFORE
+       // even attempting send_dm (messaging yourself, an empty body)
+       // -- checked here too so this doesn't echo into a thread for a
+       // message the server never actually queued. What this can't
+       // check client-side is whether the target nick exists at all;
+       // the server's own reply (rendered below regardless) covers
+       // that one remaining case, so a bad nick still shows the real
+       // "no one here called that" answer even though the optimistic
+       // echo above already rendered.
+       if(target.toLowerCase()!==nick.toLowerCase() && msgBody.trim()){
+         openDM(target);
+         var box=dmThreads[target]=dmThreads[target]||[];
+         var mine={id:0, nick:nick, body:msgBody.trim(), kind:'dm'};
+         box.push(mine);
+         render(mine);
+       }
+       (d.replies||[]).forEach(function(t){
+         if(t==='__CLEAR__'){ log.innerHTML=''; return; }
+         line(esc(t),'local');
+       });
+     } else {
+       (d.replies||[]).forEach(function(t){
+         if(t==='__CLEAR__'){ log.innerHTML=''; return; }
+         line(esc(t),'local');
+       });
+     }
      if(d.room && d.room!==room){
-       room=d.room; lastId=0; log.innerHTML='';
-       line('now in #'+room,'local');
+       room=d.room; lastId=0;
+       if(!viewingDM){ log.innerHTML=''; line('now in #'+room,'local'); }
      }
      poll();
    })
@@ -353,19 +595,23 @@ def _nav_links(lang):
     once at import time -- converted to a function for the same reason
     barkeep.py's nav tiles were: labels now depend on who's asking, so
     this has to render fresh per request rather than once at boot."""
+    # Only features this node offers (features.py); home and tools always.
+    items = (
+        (None, "/", "Home", _NAV_HOME, "nav_home"),
+        ("billboard", "/billboard", "Billboard", _NAV_BOARD, "nav_board"),
+        ("files", "/files", "Files", _NAV_FILES, "nav_files"),
+        (None, "/tools", "Tools", _NAV_TOOLS, "nav_tools"),
+        ("about", "/about", "About", _NAV_ABOUT, "nav_about"),
+    )
     return (
         "<nav class='nav'>"
-        "<a href='/' title='Home' aria-label='Home'>" + _NAV_HOME +
-        "<span>" + i18n.t("nav_home", lang) + "</span></a>"
-        "<a href='/billboard' title='Billboard' aria-label='Billboard'>" + _NAV_BOARD +
-        "<span>" + i18n.t("nav_board", lang) + "</span></a>"
-        "<a href='/files' title='Files' aria-label='Files'>" + _NAV_FILES +
-        "<span>" + i18n.t("nav_files", lang) + "</span></a>"
-        "<a href='/tools' title='Tools' aria-label='Tools'>" + _NAV_TOOLS +
-        "<span>" + i18n.t("nav_tools", lang) + "</span></a>"
-        "<a href='/about' title='About' aria-label='About'>" + _NAV_ABOUT +
-        "<span>" + i18n.t("nav_about", lang) + "</span></a>"
-        "</nav>"
+        + "".join(
+            "<a href='" + href + "' title='" + title + "' aria-label='" + title + "'>" + icon
+            + "<span>" + i18n.t(key, lang) + "</span></a>"
+            for feat, href, title, icon, key in items
+            if feat is None or features.enabled(feat)
+        )
+        + "</nav>"
     )
 
 
@@ -398,11 +644,14 @@ def render_page(room, nick, lang=None):
         lang = i18n.DEFAULT_LANG
     script = (SCRIPT
               .replace("ROOM_INIT", _js(room))
-              .replace("NICK_INIT", _js(nick)))
+              .replace("NICK_INIT", _js(nick))
+              .replace("I18N_MESSAGE_SOMEONE", _js(i18n.t("rrc_message_someone", lang)))
+              .replace("I18N_DIRECT_MESSAGES", _js(i18n.t("rrc_direct_messages", lang))))
     return (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<!DOCTYPE html>" + theme.html_open() + "<head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>RRC — Stump</title><style>" + STYLE + "</style></head><body>"
+        "<title>RRC — Stump</title><style>" + theme.CSS + STYLE + "</style>"
+        "<script>" + theme.STARTUP_SCRIPT + "</script></head><body>"
         "<header><b>RRC</b><span id='topic'></span>"
         "<span class='me'>" + i18n.t("rrc_you_are", lang) + " <span id='me'>" + _esc(nick) + "</span></span>"
         + _nav_links(lang) + "</header>"

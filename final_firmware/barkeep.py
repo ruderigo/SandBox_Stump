@@ -19,6 +19,8 @@ import i18n
 import fserv
 import rrc
 import rrc_ui
+import theme
+import features
 import flasher_ui
 
 # Per-node greeter name. Falls back so this module still imports on its
@@ -38,11 +40,7 @@ BARKEEP_ART = (
     "  |  |  |  |\n"
 )
 
-STYLE = """
-:root{
-  --bg:#1b1512; --panel:#2a2119; --ember:#d97a3a; --ember-bright:#f0a050;
-  --text:#ecdfc8; --muted:#9c8d76; --border:#493c2e;
-}
+STYLE = theme.CSS + """
 *{box-sizing:border-box;}
 body{
   background:var(--bg); color:var(--text);
@@ -79,8 +77,16 @@ input,button{
   font-family:inherit; font-size:1rem; padding:10px 12px;
   border-radius:6px; border:1px solid var(--border);
 }
-input{background:var(--panel); color:var(--text);}
-input:focus,button:focus{outline:2px solid var(--ember); outline-offset:1px;}
+input,textarea{background:var(--panel); color:var(--text);}
+textarea{font-family:inherit; font-size:1rem; padding:10px 12px;
+  border-radius:6px; border:1px solid var(--border); resize:vertical;}
+.post-form{display:flex; flex-direction:column; gap:8px; margin:10px 0;}
+.post-form button{align-self:flex-start;}
+details.post summary{cursor:pointer; padding:2px 0;}
+details.post[open] summary{color:var(--ember-bright);}
+.post-body{display:block; white-space:pre-wrap; color:var(--muted);
+  margin-top:6px; padding-left:14px;}
+input:focus,textarea:focus,button:focus,summary:focus{outline:2px solid var(--ember); outline-offset:1px;}
 button{
   background:var(--ember); color:var(--bg); font-weight:bold;
   border:none; cursor:pointer;
@@ -186,10 +192,10 @@ h2{
 }
 .link-tile{
   display:flex; flex-direction:column; text-decoration:none;
-  background:#221b15; border:1px solid var(--border); border-radius:6px;
+  background:var(--panel-2); border:1px solid var(--border); border-radius:6px;
   padding:12px 14px; transition:border-color .2s, background .2s;
 }
-.link-tile:hover{border-color:var(--ember); background:#271f18;}
+.link-tile:hover{border-color:var(--ember); background:var(--line);}
 .link-tile .title{
   font-family:ui-monospace,monospace; font-size:.9rem; font-weight:bold;
   color:var(--ember); margin-bottom:2px;
@@ -244,7 +250,7 @@ code.ip-tag{
   background:var(--panel); border:1px solid var(--border); border-radius:8px;
   overflow:hidden;
 }
-.gallery-card img{width:100%; height:auto; display:block; background:#161210;}
+.gallery-card img{width:100%; height:auto; display:block; background:var(--bg);}
 .gallery-card .caption{
   padding:8px 10px; display:flex; flex-direction:column; gap:2px;
 }
@@ -345,26 +351,28 @@ def _home_tiles(lang):
     just because the original English text happened to say it twice."""
     return (
         "<div class='tiles'>"
-        "<a class='tile' href='/rrc'>" + _ICON_CHAT +
-        "<span>" + i18n.t("nav_chat", lang) + "</span>"
-        "<small>" + i18n.t("tile_chat_sub", lang) + "</small></a>"
-        "<a class='tile' href='/billboard'>" + _ICON_BOARD +
-        "<span>" + i18n.t("nav_board", lang) + "</span>"
-        "<small>" + i18n.t("tile_board_sub", lang) + "</small></a>"
-        "<a class='tile' href='/files'>" + _ICON_FILES +
-        "<span>" + i18n.t("nav_files", lang) + "</span>"
-        "<small>" + i18n.t("tile_files_sub", lang) + "</small></a>"
-        "<a class='tile' href='/about'>" + _ICON_ABOUT +
-        "<span>" + i18n.t("nav_about", lang) + "</span>"
-        "<small>" + i18n.t("tile_about_sub", lang) + "</small></a>"
+        + "".join(
+            "<a class='tile' href='" + href + "'>" + icon +
+            "<span>" + i18n.t(label, lang) + "</span>"
+            "<small>" + i18n.t(sub, lang) + "</small></a>"
+            for feat, href, icon, label, sub in (
+                ("chat", "/rrc", _ICON_CHAT, "nav_chat", "tile_chat_sub"),
+                ("billboard", "/billboard", _ICON_BOARD, "nav_board", "tile_board_sub"),
+                ("files", "/files", _ICON_FILES, "nav_files", "tile_files_sub"),
+                ("about", "/about", _ICON_ABOUT, "nav_about", "tile_about_sub"),
+            )
+            if features.enabled(feat)
+        ) +
         "</div>"
     )
 
 
 def _page(body):
-    return ("<!DOCTYPE html><html><head><meta name='viewport' "
+    return ("<!DOCTYPE html>" + theme.html_open() + "<head><meta name='viewport' "
              "content='width=device-width, initial-scale=1'>"
-             "<style>" + STYLE + "</style></head><body>" + body + "</body></html>")
+             "<style>" + STYLE + "</style>"
+             "<script>" + theme.STARTUP_SCRIPT + "</script>"
+             "</head><body>" + body + "</body></html>")
 
 
 def _url_encode(s):
@@ -379,14 +387,46 @@ def _url_encode(s):
         if ch in safe:
             out += ch
         else:
-            out += "%%%02X" % ord(ch)
+            # Each UTF-8 byte, not ord(ch): _url_decode now decodes
+            # UTF-8 (as browsers send it), and the two must stay exact
+            # inverses or links to accented filenames break. ord() also
+            # produced "%2019" for characters past U+00FF, which no
+            # decoder reads back correctly.
+            for b in ch.encode("utf-8"):
+                out += "%%%02X" % b
     return out
 
 
 def _clean_filename(name):
-    """Same defensive filtering fserv.py's own upload handler already
-    applies -- no path traversal, no quote-breaking."""
+    """No path traversal, no quote-breaking, and -- a real, reported
+    bug -- no FAT32/exFAT-reserved characters either.
+
+    The SD card these files land on is FAT32/exFAT. Confirmed directly
+    against a real FAT32 filesystem image, not assumed: a filename
+    containing a colon (a real screenshot's own default name --
+    "screenshot 2026.12:18pm EST.png") fails to write at the
+    filesystem level outright, while the identical name with the colon
+    removed writes successfully. stream_to_file()'s open(dest, "wb")
+    would raise on a name like that, and its own except already turns
+    that into a real 500 response -- but from the browser's side, a
+    request that fails this early and this completely is
+    indistinguishable from the connection itself never having worked
+    at all: no partial response, nothing in the console, nothing in
+    the network tab, just a silent, unexplained failure. Given real
+    filenames come from whatever device and OS a visitor's browser or
+    phone happened to generate them on -- none of which know or care
+    that this specific board's storage is FAT32/exFAT -- sanitizing
+    every character that filesystem actually reserves, not just the
+    two this originally handled, is what makes upload robust to a name
+    like that instead of asking every visitor to rename their file
+    first. `<>:\\|?*` are the same reserved set FAT32/exFAT (and,
+    since they share it, Windows) has always disallowed; control
+    characters are invalid there regardless of what produced them.
+    """
     name = name.replace("/", "_").replace("..", "_").replace("'", "").replace('"', "")
+    for ch in "<>:\\|?*":
+        name = name.replace(ch, "_")
+    name = "".join(c for c in name if ord(c) >= 32)
     return name.strip()
 
 
@@ -460,11 +500,26 @@ def _process_command(text, identifier, lang):
 
 
 def _render_chat_page(lang):
-    you_label = i18n.t("home_you_label", lang)
+    """The home page: logo, title, language switcher, and a tile for
+    each feature this node offers (see features.py). The Concierge chat
+    box that used to sit here is a hidden feature now -- HF-003,
+    _render_concierge_page() below."""
     return (
-        "<pre>" + BARKEEP_ART + "</pre>"
+        "<div id='site-logo'><pre>" + BARKEEP_ART + "</pre></div>"
         "<h1>Stump</h1>"
-        + _lang_switcher(lang, "/") +
+        + _lang_switcher(lang, "/")
+        + _home_tiles(lang)
+    )
+
+
+def _render_concierge_page(lang):
+    """HF-003 -- the Concierge (BarKeep) chat box, unlinked. Moved off
+    the home page by request; still fully working at /concierge, talking
+    to the same POST /chat endpoint. See docs/HIDDEN_FEATURES.md."""
+    you_label = billboard._esc(i18n.t("home_you_label", lang))
+    return (
+        "<h1>" + _esc_name(BOT_NAME) + "</h1>"
+        + _lang_switcher(lang, "/concierge") +
         "<p class='sub'>" + i18n.t("barkeep_greeting", lang, bot_name=_esc_name(BOT_NAME)) + "</p>"
         "<div class='panel' id='log'>"
         "<p><b>" + _esc_name(BOT_NAME) + ":</b> " + i18n.t("barkeep_evening", lang) + "</p>"
@@ -473,27 +528,8 @@ def _render_chat_page(lang):
         "<input id='in' placeholder='" + i18n.t("home_say_something", lang) + "' autofocus>"
         "<button onclick='sendMsg()'>" + i18n.t("rrc_send", lang) + "</button>"
         "</div>"
-        + _home_tiles(lang) +
-        "<div class='panel'>"
-        "<p class='sub' style='margin-top:0;'>" + i18n.t("home_bring_something", lang) + "</p>"
-        "<input type='file' id='upfile'>"
-        "<div class='row'>"
-        "<input id='uphash' placeholder='" + i18n.t("home_awaiting_hash", lang) + "'>"
-        "<button onclick='doUpload()'>" + i18n.t("home_upload_button", lang) + "</button>"
-        "</div>"
-        "<p id='upstatus'><small></small></p>"
-        "</div>"
+        + _nav(lang, "home") +
         "<script>"
-        "function doUpload(){"
-        "  var file=document.getElementById('upfile').files[0];"
-        "  if(!file){return;}"
-        "  var hash=document.getElementById('uphash').value;"
-        "  var status=document.getElementById('upstatus');"
-        "  status.innerHTML='<small>" + i18n.t("home_sending", lang) + "</small>';"
-        "  fetch('/upload',{method:'POST',headers:{'X-Filename':file.name,'X-Hash':hash},body:file})"
-        "    .then(function(r){return r.text();})"
-        "    .then(function(t){status.innerHTML='<small>'+t+'</small>';});"
-        "}"
         "function sendMsg(){"
         "  var input=document.getElementById('in');"
         "  var text=input.value;"
@@ -540,6 +576,10 @@ _DESTINATIONS = {
 }
 
 
+# Nav keys that belong to a switchable feature (see features.py).
+_NAV_FEATURE = {"chat": "chat", "board": "billboard", "files": "files", "about": "about"}
+
+
 def _nav(lang, *keys):
     """Builds a tile row in the requesting client's language. The grid
     is auto-fit, so whatever number of tiles a page asks for spreads
@@ -552,6 +592,9 @@ def _nav(lang, *keys):
     each page renderer instead."""
     out = ["<div class='tiles'>"]
     for k in keys:
+        feat = _NAV_FEATURE.get(k)
+        if feat is not None and not features.enabled(feat):
+            continue
         href, icon, label_key = _DESTINATIONS[k]
         out.append("<a class='tile' href='" + href + "'>" + icon +
                     "<span>" + i18n.t(label_key, lang) + "</span></a>")
@@ -577,12 +620,319 @@ def _human_size(n):
     return "%.1f MB" % (n / (1024 * 1024))
 
 
+def _check_admin_pw(pw):
+    """True if pw unlocks admin actions on this node -- the one real
+    check, reused by every admin-gated route rather than each one
+    duplicating the same soft-import. Delegates entirely to
+    stumpid.core.check_admin_password (fail-closed, falls back to
+    fservbot's operator password -- see that function's own docstring).
+    Soft-imported the same way rrc_mesh.py already does for stumpid:
+    an admin route must still exist and correctly refuse on a node
+    where the plugin isn't installed at all, not crash with an
+    ImportError."""
+    try:
+        import stumpid.core as _stumpid
+        return _stumpid.check_admin_password(pw)
+    except ImportError:
+        return False
+
+
+def _render_admin_login_page(lang, error=False):
+    """The ONLY way to reach file deletion now -- no link, no nav tile,
+    no button anywhere in the visible UI points here. Reachable only by
+    typing the address directly, which is the point: the drawer this
+    replaced sat on /files where every visitor saw it exist, even
+    collapsed, and a wrong password there had to be re-typed once per
+    file. This page asks for the password exactly once regardless of
+    how many files get selected next.
+    """
+    err = "<p class='sub' style='color:var(--ember-bright);'>" + i18n.t("admin_wrong_password", lang) + "</p>" if error else ""
+    return (
+        "<h1>" + i18n.t("admin_header", lang) + "</h1>"
+        + err +
+        "<form method='POST' action='/admin' class='row'>"
+        "<input type='password' name='admin_pass' placeholder='"
+        + i18n.t("files_admin_password", lang) + "' autofocus>"
+        "<button type='submit'>" + i18n.t("admin_login_button", lang) + "</button>"
+        "</form>"
+    )
+
+
+def _render_admin_file_list_page(lang, names, pw):
+    """Shown only after a correct password. The password travels
+    forward as a hidden field on the SAME simple, stateless pattern
+    this whole project already uses everywhere else (no sessions, no
+    cookies) -- re-validated for real by /admin/delete when the form
+    comes back, never trusted just because it arrived in a hidden
+    field. One password entry covers selecting as many files as
+    wanted; the batch submits together as a single delete.
+
+    Also carries theme and logo customization -- unrelated to file
+    deletion, but gated behind the same login rather than a second
+    password prompt, since both are "things only an admin should
+    change" and asking twice would be the exact kind of friction the
+    /admin redesign was built to remove. Shown regardless of whether
+    there are any files to delete, unlike the checkbox list below.
+    """
+    if not names:
+        file_section = "<p class='sub'>" + i18n.t("files_none_yet", lang) + "</p>"
+    else:
+        items = "".join(
+            "<li><label><input type='checkbox' name='f' value='" + billboard._esc(n) + "'> "
+            + billboard._esc(n) + "</label></li>"
+            for n in names
+        )
+        file_section = (
+            "<form method='POST' action='/admin/delete' autocomplete='off'>"
+            "<input type='hidden' name='admin_pass' value='" + billboard._esc(pw) + "'>"
+            "<div class='panel'><ul class='files'>" + items + "</ul></div>"
+            "<button type='submit'>" + i18n.t("admin_delete_selected", lang) + "</button>"
+            "</form>"
+        )
+
+    # Sections for features this node doesn't offer are left out (their
+    # delete routes answer 404 anyway); theme and logo settings always show.
+    files_part = ("<p class='sub'>" + i18n.t("admin_select_intro", lang) + "</p>" + file_section
+                  if features.enabled("files") else "")
+    board_part = _render_admin_billboard_section(lang, pw) if features.enabled("billboard") else ""
+    return (
+        "<h1>" + i18n.t("admin_header", lang) + "</h1>"
+        + files_part
+        + board_part
+        + _render_admin_settings_section(lang)
+    )
+
+
+def _render_admin_billboard_section(lang, pw):
+    """Moderation for the walk-up bulletin board -- added on request,
+    specifically for removing something inappropriate rather than
+    waiting up to 72 hours for BILLBOARD_TTL_SECONDS to age it out on
+    its own. Same password-gated pattern as file deletion above: one
+    hidden field carries the already-validated password forward,
+    checked again for real by /admin/delete_post rather than trusted
+    just because it arrived with the form.
+
+    Each post is identified by its own timestamp (see
+    billboard.delete_entry's own docstring for why that's a reasonable
+    identifier here without adding a separate ID field to the storage
+    format), carried as the checkbox's value -- HTML-escaped for safe
+    embedding, not URL-encoded, the same fix that corrected the file
+    checkboxes after a real double-encoding bug there.
+
+    Calls billboard._prune_and_write() first, with no new entry, purely
+    to guarantee every entry has a REAL, stored timestamp before any
+    checkbox is built. Without this, a post that predates the
+    auto-purge feature and hasn't been through a prune pass yet (the
+    board's very first admin visit after upgrading, before anyone has
+    posted since) reads back from _read_entries() with ts=None --
+    which rendered as a checkbox value='None', and deleting it always
+    silently failed: delete_entry() can only ever match a stored line
+    with a real, three-field timestamp, and an old, never-pruned entry
+    is still stored as its original two-field line with no timestamp
+    at all. Confirmed directly: that exact sequence reproduced "0
+    deleted" with the entry still present, matching a real report.
+    Pruning here first means _read_entries() right after always sees
+    the same freshly-stamped timestamp that gets written to disk, so
+    the two can never disagree.
+    """
+    billboard._prune_and_write()
+    entries = billboard._read_entries()
+    if not entries:
+        return (
+            "<h2 class='sub'>" + i18n.t("admin_billboard_header", lang) + "</h2>"
+            "<p class='sub'>" + i18n.t("billboard_nothing_yet", lang) + "</p>"
+        )
+    items = "".join(
+        "<li><label><input type='checkbox' name='ts' value='" + billboard._esc(pid) + "'> "
+        + "<span>" + billboard._esc(title) + " <small>&mdash; " + billboard._esc(sig) + "</small>"
+        # Full body, not collapsed: a moderator needs to see exactly what
+        # they're about to remove, which is often in the body, not the title.
+        + ("<span class='post-body'>" + billboard._esc(body) + "</span>" if body else "")
+        + "</span></label></li>"
+        for sig, title, body, ts, pid in reversed(entries)
+    )
+    return (
+        "<h2 class='sub'>" + i18n.t("admin_billboard_header", lang) + "</h2>"
+        "<form method='POST' action='/admin/delete_post' autocomplete='off'>"
+        "<input type='hidden' name='admin_pass' value='" + billboard._esc(pw) + "'>"
+        "<div class='panel'><ul class='files'>" + items + "</ul></div>"
+        "<button type='submit'>" + i18n.t("admin_delete_selected", lang) + "</button>"
+        "</form>"
+    )
+
+
+def _render_admin_settings_section(lang):
+    """Theme presets, a custom color palette, and SVG logo controls --
+    all of it client-side, persisted in the ADMIN'S OWN BROWSER via
+    localStorage, not written to the server or the SD card anywhere.
+    Worth being direct about since it's easy to assume otherwise for a
+    'branding' feature: setting a theme or logo here changes what this
+    one browser sees on its own next visit. It does not change what
+    any other visitor sees, and there is currently no way to make a
+    theme or logo choice apply site-wide to everyone -- that would be
+    server-side storage, which this deliberately isn't.
+    """
+    return (
+        "<h2 class='sub'>" + i18n.t("admin_theme_header", lang) + "</h2>"
+        "<div class='panel'>"
+        "<div class='row'>"
+        "<button type='button' onclick=\"stumpSetTheme('site')\">" + i18n.t("admin_theme_site", lang)
+        + " (" + i18n.t("admin_theme_" + theme.site_theme(), lang) + ")</button>"
+        "<button type='button' onclick=\"stumpSetTheme('amber')\">" + i18n.t("admin_theme_amber", lang) + "</button>"
+        "<button type='button' onclick=\"stumpSetTheme('phosphor')\">" + i18n.t("admin_theme_phosphor", lang) + "</button>"
+        "<button type='button' onclick=\"stumpSetTheme('oled')\">" + i18n.t("admin_theme_oled", lang) + "</button>"
+        "<button type='button' onclick=\"stumpSetTheme('paper')\">" + i18n.t("admin_theme_paper", lang) + "</button>"
+        "</div>"
+        "<p class='sub'>" + i18n.t("admin_theme_custom_intro", lang) + "</p>"
+        "<div class='row'>"
+        "<label>" + i18n.t("admin_color_bg", lang) + " <input type='color' id='stump-c-bg' value='#1b1512'></label>"
+        "<label>" + i18n.t("admin_color_panel", lang) + " <input type='color' id='stump-c-panel' value='#2a2119'></label>"
+        "<label>" + i18n.t("admin_color_text", lang) + " <input type='color' id='stump-c-text' value='#ecdfc8'></label>"
+        "<label>" + i18n.t("admin_color_ember", lang) + " <input type='color' id='stump-c-ember' value='#d97a3a'></label>"
+        "<label>" + i18n.t("admin_color_border", lang) + " <input type='color' id='stump-c-border' value='#493c2e'></label>"
+        "</div>"
+        "<div class='row'>"
+        "<button type='button' onclick='stumpSaveCustomPalette()'>" + i18n.t("admin_save_palette", lang) + "</button>"
+        "<button type='button' onclick='stumpResetPalette()'>" + i18n.t("admin_reset_palette", lang) + "</button>"
+        "</div>"
+        "</div>"
+
+        "<h2 class='sub'>" + i18n.t("admin_logo_header", lang) + "</h2>"
+        "<div class='panel'>"
+        "<textarea id='stump-svg-input' rows='6' placeholder='<svg ...>...</svg>' "
+        "style='width:100%;font-family:ui-monospace,monospace;font-size:.8rem;'></textarea>"
+        "<div class='row'>"
+        "<button type='button' onclick='stumpSaveSvgLogo()'>" + i18n.t("admin_save_logo", lang) + "</button>"
+        "<button type='button' onclick='stumpResetLogo()'>" + i18n.t("admin_reset_logo", lang) + "</button>"
+        "<button type='button' onclick='stumpHideLogo()'>" + i18n.t("admin_hide_logo", lang) + "</button>"
+        "</div>"
+        "</div>"
+
+        "<script>" + _ADMIN_SETTINGS_SCRIPT.replace(
+            "I18N_LOGO_RESET_NOTICE",
+            json.dumps(i18n.t("admin_logo_reset_notice", lang)).replace("</", "<\\/")
+        ).replace("STUMP_SITE_THEME", json.dumps(theme.site_theme())) + "</script>"
+    )
+
+
+# All four stumpSet*/stumpSave*/stumpReset* functions are plain globals,
+# not wrapped in an IIFE -- they're referenced from onclick= attributes
+# on this same page, which need them reachable on window.
+_ADMIN_SETTINGS_SCRIPT = """
+(function(){
+  try {
+    var saved = JSON.parse(localStorage.getItem('stump_custom_colors') || '{}');
+    var map = {'--bg':'stump-c-bg','--panel':'stump-c-panel','--text':'stump-c-text','--ember':'stump-c-ember','--border':'stump-c-border'};
+    for (var k in map) {
+      if (saved[k]) { var el = document.getElementById(map[k]); if (el) el.value = saved[k]; }
+    }
+    var svg = localStorage.getItem('stump_custom_svg');
+    if (svg) { var ta = document.getElementById('stump-svg-input'); if (ta) ta.value = svg; }
+  } catch (e) {}
+})();
+
+function stumpSetTheme(t){
+  try {
+    localStorage.removeItem('stump_custom_colors');
+    document.documentElement.removeAttribute('style');
+    if (t === 'site') {
+      // Follow the node's own theme again (set by the technician).
+      localStorage.removeItem('stump_theme');
+      document.documentElement.setAttribute('data-theme', STUMP_SITE_THEME);
+    } else {
+      localStorage.setItem('stump_theme', t);
+      document.documentElement.setAttribute('data-theme', t);
+    }
+  } catch (e) {}
+}
+
+function stumpSaveCustomPalette(){
+  try {
+    var colors = {
+      '--bg': document.getElementById('stump-c-bg').value,
+      '--panel': document.getElementById('stump-c-panel').value,
+      '--text': document.getElementById('stump-c-text').value,
+      '--ember': document.getElementById('stump-c-ember').value,
+      '--border': document.getElementById('stump-c-border').value
+    };
+    // The in-between shades (tiles, sidebars, dividers, secondary text)
+    // derived from the five picked colours, so a light custom palette
+    // doesn't keep the dark amber versions of them.
+    function mix(a, b){
+      var r = '#';
+      for (var i = 1; i < 7; i += 2) {
+        var v = Math.round((parseInt(a.substr(i, 2), 16) + parseInt(b.substr(i, 2), 16)) / 2);
+        r += ('0' + v.toString(16)).slice(-2);
+      }
+      return r;
+    }
+    colors['--panel-2'] = mix(colors['--bg'], colors['--panel']);
+    colors['--line'] = mix(colors['--panel'], colors['--border']);
+    colors['--muted'] = mix(colors['--text'], colors['--bg']);
+    colors['--dim'] = colors['--muted'];
+    colors['--ember-bright'] = colors['--ember'];
+    localStorage.setItem('stump_custom_colors', JSON.stringify(colors));
+    localStorage.setItem('stump_theme', 'custom');
+    document.documentElement.removeAttribute('data-theme');
+    for (var k in colors) document.documentElement.style.setProperty(k, colors[k]);
+  } catch (e) {}
+}
+
+function stumpResetPalette(){
+  try {
+    localStorage.removeItem('stump_custom_colors');
+    localStorage.removeItem('stump_theme');
+    document.documentElement.setAttribute('data-theme', STUMP_SITE_THEME);
+    document.documentElement.removeAttribute('style');
+  } catch (e) {}
+}
+
+function stumpSaveSvgLogo(){
+  try {
+    var svg = document.getElementById('stump-svg-input').value;
+    if (!svg.trim()) return;
+    localStorage.setItem('stump_custom_svg', svg);
+    localStorage.removeItem('stump_logo_hidden');
+    var el = document.getElementById('site-logo');
+    if (el) { el.innerHTML = svg; el.style.display = ''; }
+  } catch (e) {}
+}
+
+function stumpResetLogo(){
+  try {
+    localStorage.removeItem('stump_custom_svg');
+    localStorage.removeItem('stump_logo_hidden');
+    var ta = document.getElementById('stump-svg-input');
+    if (ta) ta.value = '';
+  } catch (e) {}
+  // A page reload, not a DOM patch here -- the default mark is server-
+  // rendered HTML in _render_chat_page, not something this page (the
+  // admin settings page, a different page entirely) has a copy of to
+  // restore from client-side.
+  alert(I18N_LOGO_RESET_NOTICE);
+}
+
+function stumpHideLogo(){
+  try {
+    localStorage.setItem('stump_logo_hidden', '1');
+    var el = document.getElementById('site-logo');
+    if (el) el.style.display = 'none';
+  } catch (e) {}
+}
+"""
+
+
 def _render_files_page(lang):
     """A real page for the shelf, not just a chat reply.
 
     The file list previously existed only as a BarKeep command, which
     meant finding a download required knowing to type 'files' first.
     On a kiosk with no keyboard in reach that is close to unusable.
+
+    No admin/delete UI on this page at all -- that lives entirely at
+    /admin now, a page with no link pointing to it anywhere, reachable
+    only by typing the address directly. See _render_admin_page()'s own
+    docstring for why.
     """
     if not fserv.sd_ok:
         rows = "<p class='sub'>" + i18n.t("files_no_card", lang) + "</p>"
@@ -608,13 +958,76 @@ def _render_files_page(lang):
                 )
             rows = "<ul class='files'>" + "".join(items) + "</ul>"
 
+    # Upload lives here, next to the shelf it adds to (it used to sit on
+    # the home page). Shown only with a card mounted -- without one,
+    # /upload can only answer "no card", so offering it would be a trap.
+    upload = ""
+    if fserv.sd_ok:
+        upload = (
+            "<div class='panel'>"
+            "<p class='sub' style='margin-top:0;'>" + i18n.t("home_bring_something", lang) + "</p>"
+            "<input type='file' id='upfile'>"
+            "<div class='row'>"
+            "<input id='uphash' style='display:none' value=''>"
+            "<button id='upbtn' onclick='doUpload()'>" + i18n.t("home_upload_button", lang) + "</button>"
+            "</div>"
+            "<p id='upstatus'><small></small></p>"
+            "</div>"
+            + _UPLOAD_SCRIPT
+                .replace("I18N_SENDING", json.dumps(i18n.t("home_sending", lang)).replace("</", "<\\/"))
+                .replace("I18N_UPLOAD_ERROR", json.dumps(i18n.t("home_upload_error", lang)).replace("</", "<\\/"))
+        )
+
     return (
         "<h1>" + i18n.t("nav_files", lang) + "</h1>"
         + _lang_switcher(lang, "/files") +
         "<p class='sub'>" + i18n.t("files_tap_to_download", lang) + "</p>"
-        "<div class='panel'>" + rows + "</div>"
+        "<div class='panel' id='file-list'>" + rows + "</div>"
+        + upload
         + _nav(lang, "home", "chat", "board", "tools", "about")
     )
+
+
+# The upload button's script. Three real, reported gaps fixed earlier
+# stay fixed: a .catch() so a failed request shows an error instead of
+# "Sending..." forever; the button disabled while a request is in flight
+# (no overlapping uploads from impatient clicks); the file input cleared
+# once any response arrives. New with the move to /files: on success the
+# file list refreshes in place, so the new file appears while the
+# confirmation (and any credit balance) stays on screen. Translated text
+# goes in via json.dumps, never raw into a quoted JS string -- the
+# apostrophe in the French error message broke this whole script once.
+_UPLOAD_SCRIPT = """<script>
+function doUpload(){
+  var file=document.getElementById('upfile').files[0];
+  if(!file){return;}
+  var hash=document.getElementById('uphash').value;
+  var status=document.getElementById('upstatus');
+  var btn=document.getElementById('upbtn');
+  function say(t){ status.innerHTML='<small></small>'; status.firstChild.textContent=t; }
+  btn.disabled=true;
+  say(I18N_SENDING);
+  var ok=false;
+  fetch('/upload',{method:'POST',headers:{'X-Filename':file.name,'X-Hash':hash},body:file})
+    .then(function(r){ok=r.ok; return r.text();})
+    .then(function(t){
+      say(t);
+      document.getElementById('upfile').value='';
+      btn.disabled=false;
+      if(ok) refreshList();
+    })
+    .catch(function(){
+      say(I18N_UPLOAD_ERROR);
+      btn.disabled=false;
+    });
+}
+function refreshList(){
+  fetch('/files').then(function(r){return r.text();}).then(function(h){
+    var fresh=new DOMParser().parseFromString(h,'text/html').getElementById('file-list');
+    if(fresh) document.getElementById('file-list').innerHTML=fresh.innerHTML;
+  }).catch(function(){});
+}
+</script>"""
 
 
 def _render_tools_page(lang):
@@ -656,12 +1069,7 @@ def _render_tools_page(lang):
         "<h1>" + i18n.t("tools_header", lang) + "</h1>"
         + _lang_switcher(lang, "/tools") +
         "<p class='sub'>" + i18n.t("tools_intro", lang) + "</p>"
-        + listing +
-        "<h2 class='sub'>" + i18n.t("tools_flash_header", lang) + "</h2>"
-        "<p class='sub'>" + i18n.t("tools_flash_intro", lang) + "</p>"
-        "<div class='panel'>"
-        "<p><a href='/flash'>" + i18n.t("tools_open_flasher", lang) + "</a></p>"
-        "</div>"
+        + listing
         + _nav(lang, "home", "files", "chat", "about")
     )
 
@@ -883,6 +1291,14 @@ MIME_TYPES = {
 
 
 def _mime_for(filename):
+    # A handful of real, well-known filenames genuinely have no
+    # extension at all -- LICENSE specifically, the standard,
+    # tool-recognized name GitHub/package managers/license scanners all
+    # look for. Without this, it fell through to
+    # application/octet-stream and downloaded as an anonymous binary
+    # blob instead of the plain text it actually is.
+    if filename.upper() in ("LICENSE", "LICENCE"):
+        return "text/plain"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return MIME_TYPES.get(ext, "application/octet-stream")
 
@@ -1036,6 +1452,18 @@ async def _handle(reader, writer):
         peer = writer.get_extra_info("peername")
         identifier = billboard._extract_ip(peer)
 
+        # A feature the technician turned off (features.py) is gone,
+        # not just unlinked: every one of its addresses answers 404.
+        if features.path_blocked(path):
+            await _send(writer, "404 Not Found",
+                        i18n.t("feature_off", i18n.get_lang(identifier)), "text/plain")
+            return
+
+        if method == "GET" and path.startswith("/concierge"):
+            # HF-003: the Concierge, unlinked (see docs/HIDDEN_FEATURES.md).
+            await _send(writer, "200 OK", _page(_render_concierge_page(i18n.get_lang(identifier))))
+            return
+
         if method == "POST" and path.startswith("/chat"):
             length = int(headers.get("content-length", "0"))
             body = await _read_small_body(reader, length)
@@ -1045,12 +1473,129 @@ async def _handle(reader, writer):
         elif method == "POST" and path.startswith("/post"):
             length = int(headers.get("content-length", "0"))
             body = await _read_small_body(reader, length)
-            entry = ""
+            # title= and body= from the current form. entry= is the
+            # original single-field form, still accepted as a title-only
+            # post so existing clients (the Android integration's tech
+            # sheet documents it) keep working unchanged.
+            title = ""
+            post_body = ""
             for kv in body.decode().split("&"):
-                if kv.startswith("entry="):
-                    entry = billboard._url_decode(kv[6:])
-            billboard._append_entry(entry, identifier)
+                if kv.startswith("title="):
+                    title = billboard._url_decode(kv[6:])
+                elif kv.startswith("body="):
+                    post_body = billboard._url_decode(kv[5:])
+                elif kv.startswith("entry=") and not title:
+                    title = billboard._url_decode(kv[6:])
+            billboard._append_entry(title, post_body, identifier)
             await writer.awrite("HTTP/1.1 303 See Other\r\nLocation: /billboard\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+
+        elif method == "GET" and path.startswith("/admin"):
+            # No link anywhere points here on purpose -- see
+            # _render_admin_login_page's own docstring.
+            await _send(writer, "200 OK", _page(_render_admin_login_page(i18n.get_lang(identifier))))
+
+        elif method == "POST" and path.startswith("/admin") and not path.startswith("/admin/delete"):
+            length = int(headers.get("content-length", "0"))
+            body = await _read_small_body(reader, length)
+            pw = ""
+            for kv in body.decode().split("&"):
+                if kv.startswith("admin_pass="):
+                    pw = billboard._url_decode(kv[11:])
+            lang = i18n.get_lang(identifier)
+            if not _check_admin_pw(pw):
+                await _send(writer, "403 Forbidden", _page(_render_admin_login_page(lang, error=True)))
+            else:
+                names = fserv._list_files() if fserv.sd_ok else []
+                await _send(writer, "200 OK", _page(_render_admin_file_list_page(lang, names, pw)))
+
+        elif method == "POST" and path.startswith("/admin/delete_post"):
+            # Must come BEFORE the /admin/delete branch below --
+            # "/admin/delete_post".startswith("/admin/delete") is True,
+            # so without this ordering the broader check would catch
+            # these requests first and try to delete files named after
+            # timestamps that don't exist, silently doing nothing.
+            # Confirmed directly before writing this rather than
+            # assumed: a startswith-based router means more specific
+            # paths always have to come first.
+            #
+            # Same re-validation discipline as file deletion: the
+            # password arrived as a hidden field, convenient but not
+            # trustworthy on its own, so it's checked here exactly as
+            # strictly as everywhere else that accepts one. Timestamps
+            # arrive the same repeated-field way filenames do for a
+            # batch file delete -- one ts=... occurrence per checked
+            # post, collected into a list rather than only keeping the
+            # last match.
+            length = int(headers.get("content-length", "0"))
+            body = await _read_small_body(reader, length)
+            pw = ""
+            timestamps = []
+            for kv in body.decode().split("&"):
+                if kv.startswith("ts="):
+                    timestamps.append(billboard._url_decode(kv[3:]))
+                elif kv.startswith("admin_pass="):
+                    pw = billboard._url_decode(kv[11:])
+            if not _check_admin_pw(pw):
+                await _send(writer, "403 Forbidden", "Invalid admin password", "text/plain")
+            else:
+                deleted_titles = []
+                for ts_str in timestamps:
+                    removed = billboard.delete_entry(ts_str) if ts_str else False
+                    if removed:
+                        deleted_titles.append(removed if removed is not True else "?")
+                # Name exactly what was removed, not just how many -- so a
+                # moderator can see at a glance that it matches what they
+                # ticked.
+                lang = i18n.get_lang(identifier)
+                names = fserv._list_files() if fserv.sd_ok else []
+                notice = "<p class='sub'>" + i18n.t("admin_post_deleted_notice", lang, n=len(deleted_titles))
+                if deleted_titles:
+                    notice += " " + ", ".join("« " + billboard._esc(t) + " »" for t in deleted_titles)
+                notice += "</p>"
+                await _send(writer, "200 OK", _page(notice + _render_admin_file_list_page(lang, names, pw)))
+
+        elif method == "POST" and path.startswith("/admin/delete"):
+            # Re-validates the password for real -- it arrived as a
+            # hidden field on the page above, which is convenient, not
+            # trustworthy: anyone could POST here directly with a
+            # forged or empty one, so this checks it exactly as
+            # strictly as the login step did, not just checks it was
+            # present. Every checked box arrives as a repeated f=...
+            # field with the SAME name, one occurrence per file --
+            # collected into a list here rather than the earlier
+            # single-file parsing pattern that only ever kept the last
+            # match, since a batch is the whole point of this route.
+            length = int(headers.get("content-length", "0"))
+            body = await _read_small_body(reader, length)
+            pw = ""
+            fnames = []
+            for kv in body.decode().split("&"):
+                if kv.startswith("f="):
+                    fnames.append(_clean_filename(billboard._url_decode(kv[2:])))
+                elif kv.startswith("admin_pass="):
+                    pw = billboard._url_decode(kv[11:])
+            if not _check_admin_pw(pw):
+                await _send(writer, "403 Forbidden", "Invalid admin password", "text/plain")
+            else:
+                deleted_count = 0
+                for fname in fnames:
+                    if fname and fserv.delete_file(fname):
+                        deleted_count += 1
+                # Re-renders the file list directly instead of
+                # redirecting to /admin -- a 303 there lands on the
+                # bare login form (that's what GET /admin always shows),
+                # giving zero visible confirmation that anything
+                # happened. A real deletion succeeding and then bouncing
+                # back to an empty password prompt reads exactly like
+                # "the delete doesn't work", confirmed directly against
+                # a real test report. The password is already validated
+                # at this point in the handler, so there's no reason to
+                # make the admin type it a second time just to see the
+                # file is actually gone.
+                lang = i18n.get_lang(identifier)
+                names = fserv._list_files() if fserv.sd_ok else []
+                notice = "<p class='sub'>" + i18n.t("admin_deleted_notice", lang, n=deleted_count) + "</p>"
+                await _send(writer, "200 OK", _page(notice + _render_admin_file_list_page(lang, names, pw)))
 
         elif method == "GET" and path.startswith("/rrc/poll"):
             # Poll for new messages. The client sends the highest id it
@@ -1084,6 +1629,22 @@ async def _handle(reader, writer):
                 # they share the message-id sequence so the client's
                 # existing since/lastId bookkeeping covers both.
                 "dms": rrc.dms_since(identifier, since_id),
+                # Who's actually in this room right now -- lets the
+                # client offer "select someone to DM" instead of
+                # requiring the exact nick typed blind into /msg. Sent
+                # every poll (not just when it changes): cheap, already
+                # pruned server-side by users_in_room's own
+                # _prune_users call, and simpler than a second
+                # changed-since check for a list this short (MAX_USERS
+                # is 40).
+                # People in this room, plus mesh peers reachable only by
+                # DM (heard by announce, never messaged) -- the web UI
+                # lists these under "Message someone". /names and room
+                # counts stay room-only.
+                "users": sorted(set(rrc.users_in_room(actual)) | set(rrc.reachable_nicks())),
+                # Which of those are other Stump nodes (from their
+                # stump.node beacons), so the UI can label them.
+                "stumps": rrc.stump_nicks(),
             }
             await _send(writer, "200 OK", json.dumps(payload), "application/json")
 
@@ -1212,6 +1773,20 @@ async def _handle(reader, writer):
                 await _send(writer, "503 Service Unavailable", "No card in the slot right now.", "text/plain")
             elif length <= 0:
                 await _send(writer, "400 Bad Request", "Empty upload.", "text/plain")
+            elif not fserv.make_room_fifo(length):
+                # Checked (and, if needed, evicted the oldest shared
+                # files to make room) BEFORE reading a single byte of
+                # the body -- same reasoning as the checks above it:
+                # rejecting after the fact would still mean the upload
+                # had to arrive first. TOOLS_DIR/FW_DIR/ABOUT_DIR are
+                # never eligible for eviction (see make_room_fifo's own
+                # docstring), so this can still legitimately fail on a
+                # card that's genuinely full even after clearing every
+                # shared file -- that's a real "no room" answer, not a
+                # bug.
+                await fserv.drain(reader, length)
+                await _send(writer, "507 Insufficient Storage",
+                            "Card capacity exceeded (75% threshold limit).", "text/plain")
             else:
                 table = fserv._awaiting()
                 is_slot = bool(hash_hex) and hash_hex in table and not table[hash_hex]["fulfilled"]
@@ -1227,19 +1802,43 @@ async def _handle(reader, writer):
                                  "Upload interrupted (" + str(written) + " of " +
                                  str(length) + " bytes) — nothing was kept. Try again.",
                                  "text/plain")
-                elif is_slot:
-                    # Only mark the slot fulfilled once the bytes are
-                    # actually on disk -- marking it earlier would burn a
-                    # one-shot slot on an upload that never completed.
-                    table[hash_hex]["fulfilled"] = True
-                    fserv._save_json(fserv.AWAITING_FILE, table)
-                    await _send(writer, "200 OK", "Delivered to your awaiting slot.", "text/plain")
                 else:
-                    credited = fserv.credit_add(identifier, fserv.credit_cost(fname))
-                    if fserv.CREDITS_ENABLED:
-                        msg = "Uploaded. Your balance: " + str(credited)
-                    else:
-                        msg = "Uploaded. Thanks for bringing something."
+                    # The file itself is already safely on disk at this
+                    # point -- stream_to_file succeeded. Everything from
+                    # here on is bookkeeping (marking a slot fulfilled,
+                    # updating the credit ledger), and _save_json's own
+                    # fix already stops a write failure there from
+                    # raising -- but this try/except is a second,
+                    # independent layer specifically so that ANY future
+                    # exception in this bookkeeping, not just the one
+                    # already fixed, still can't turn a real, completed
+                    # upload into a response the client never receives.
+                    # Confirmed as a real, reported bug without this:
+                    # barkeep.py's own outer exception handler logs an
+                    # uncaught error server-side but was never built to
+                    # send a response for one this deep, so the file
+                    # could be genuinely, successfully written while the
+                    # browser's fetch() just hangs -- no success, no
+                    # error, nothing, indistinguishable from the upload
+                    # having failed outright.
+                    try:
+                        if is_slot:
+                            # Only mark the slot fulfilled once the bytes
+                            # are actually on disk -- marking it earlier
+                            # would burn a one-shot slot on an upload
+                            # that never completed.
+                            table[hash_hex]["fulfilled"] = True
+                            fserv._save_json(fserv.AWAITING_FILE, table)
+                            msg = "Delivered to your awaiting slot."
+                        else:
+                            credited = fserv.credit_add(identifier, fserv.credit_cost(fname))
+                            if fserv.CREDITS_ENABLED:
+                                msg = "Uploaded. Your balance: " + str(credited)
+                            else:
+                                msg = "Uploaded. Thanks for bringing something."
+                    except Exception as e:
+                        print("[barkeep] upload bookkeeping failed (file already saved):", e)
+                        msg = "Uploaded, but couldn't update your balance/slot record."
                     await _send(writer, "200 OK", msg, "text/plain")
 
         elif method == "GET" and path.startswith("/download"):
